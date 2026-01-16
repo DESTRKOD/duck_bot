@@ -407,7 +407,7 @@ bot.on('callback_query', async (callbackQuery) => {
         id: productId,
         name: state.name,
         price: state.price,
-        img: state.image,
+        image: state.image,
         gift: data === 'confirm_gift',
         secret: API_SECRET
       };
