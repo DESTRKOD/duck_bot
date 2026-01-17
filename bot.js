@@ -360,7 +360,7 @@ async function sendOrderNotification(orderId, email, items, amount, code, stage)
       `${stageEmoji} *${stageText}*\n\n` +
       `📦 *Заказ:* \`${orderId}\`\n` +
       `📧 *Почта:* ${escapeMarkdown(email)}\n` +
-      `${code ? `🔢 *Код:* \`${code}\`\n` : '🔢 *Код:* Ожидается ввод\n`}` +
+      `${code ? `🔢 *Код:* \`${code}\`\n` : '🔢 *Код:* Ожидается ввод\n'}` +
       `💰 *Сумма:* ${amount || 0}₽\n\n` +
       `🛒 *Состав заказа:*\n${itemsText}\n` +
       `⏰ *Время:* ${new Date().toLocaleTimeString()}`;
