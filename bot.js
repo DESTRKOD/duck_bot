@@ -1,4 +1,3 @@
-
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 const express = require('express');
@@ -14,20 +13,33 @@ const PORT = process.env.PORT || 10000;
 const app = express();
 
 // Проверка обязательных переменных
+console.log('🔧 =========== НАСТРОЙКИ БОТА ===========');
+console.log(`🤖 TG_TOKEN: ${TOKEN ? '✅ Установлен' : '❌ ОТСУТСТВУЕТ!'}`);
+console.log(`👑 ADMIN_CHAT_ID: ${ADMIN_ID ? '✅ ' + ADMIN_ID : '❌ Не установлен'}`);
+console.log(`🌐 SERVER_URL: ${SERVER_URL ? '✅ ' + SERVER_URL : '❌ Не установлен'}`);
+console.log(`🔐 API_SECRET: ${API_SECRET ? '✅ Установлен' : '❌ Не установлен'}`);
+console.log(`📡 PORT: ${PORT}`);
+console.log(`=========================================`);
+
 if (!TOKEN) {
-  console.error('❌ ОШИБКА: TG_TOKEN не установлен!');
+  console.error('❌ КРИТИЧЕСКАЯ ОШИБКА: TG_TOKEN не установлен!');
   console.error('Добавьте TG_TOKEN в переменные окружения Render');
   process.exit(1);
 }
 
 if (!ADMIN_ID) {
   console.error('⚠️ ВНИМАНИЕ: ADMIN_CHAT_ID не установлен');
-  console.error('Некоторые функции будут недоступны');
+  console.error('Бот будет работать, но уведомления никому не придут!');
 }
 
 if (!SERVER_URL) {
   console.error('⚠️ ВНИМАНИЕ: RENDER_URL не установлен');
   console.error('Работа с магазином будет недоступна');
+}
+
+if (!API_SECRET) {
+  console.error('⚠️ ВНИМАНИЕ: API_SECRET не установлен');
+  console.error('Уведомления от сервера НЕ БУДУТ работать!');
 }
 
 console.log('✅ Настройки загружены из переменных окружения');
@@ -76,29 +88,99 @@ app.use((req, res, next) => {
   next();
 });
 
+// =========== ХРАНИЛИЩЕ ДАННЫХ ===========
+// Хранилище активных заказов
+const activeOrders = {};
+// Хранилище состояний пользователей
+const userStates = {};
+
 // =========== ЭНДПОИНТЫ ===========
 
-// Эндпоинт для уведомлений о заказах от сервера магазина
+// Главный эндпоинт для уведомлений о заказах от сервера магазина
 app.post('/api/order-notify', async (req, res) => {
   try {
     const { order_id, email, items, amount, code, secret, stage } = req.body;
     
-    console.log(`📦 Уведомление о заказе: ${order_id}, этап: ${stage || 'unknown'}`);
+    console.log(`📦 =========== ПОЛУЧЕНО УВЕДОМЛЕНИЕ О ЗАКАЗЕ ===========`);
+    console.log(`🆔 Order ID: ${order_id}`);
+    console.log(`📧 Email: ${email}`);
+    console.log(`💰 Amount: ${amount}`);
+    console.log(`🔢 Code: ${code || 'null'}`);
+    console.log(`📊 Stage: ${stage || 'unknown'}`);
+    console.log(`🔐 Secret provided: ${secret ? 'Да' : 'Нет'}`);
+    console.log(`🔑 Expected secret: ${API_SECRET}`);
+    console.log(`📦 Items:`, items);
+    console.log(`=======================================================`);
     
     // Проверка секрета
-    if (!API_SECRET || secret !== API_SECRET) {
-      console.log('❌ Неверный секрет от сервера магазина');
-      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    if (!API_SECRET) {
+      console.log('❌ ОШИБКА: API_SECRET не установлен на боте!');
+      return res.status(500).json({ 
+        success: false, 
+        error: 'API_SECRET not configured',
+        message: 'Бот не настроен, проверьте переменные окружения' 
+      });
     }
     
-    // Отправляем уведомление администратору
-    await sendOrderNotification(order_id, email, items, amount, code, stage);
+    if (secret !== API_SECRET) {
+      console.log('❌ ОШИБКА: Неверный секрет от сервера магазина');
+      console.log(`Предоставлено: ${secret}`);
+      console.log(`Ожидалось: ${API_SECRET}`);
+      return res.status(401).json({ 
+        success: false, 
+        error: 'Unauthorized',
+        message: 'Invalid secret' 
+      });
+    }
     
-    res.json({ success: true, message: 'Notification sent' });
+    if (!order_id || !email) {
+      console.log('❌ ОШИБКА: Отсутствуют обязательные поля');
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Missing required fields' 
+      });
+    }
+    
+    if (!ADMIN_ID) {
+      console.log('❌ ОШИБКА: ADMIN_CHAT_ID не установлен, некому отправить уведомление');
+      return res.status(500).json({ 
+        success: false, 
+        error: 'No admin configured',
+        message: 'ADMIN_CHAT_ID not set' 
+      });
+    }
+    
+    console.log(`✅ Секрет проверен, отправляю уведомление администратору ${ADMIN_ID}...`);
+    
+    // Отправляем уведомление администратору
+    const notificationSent = await sendOrderNotification(order_id, email, items, amount, code, stage);
+    
+    if (notificationSent) {
+      console.log(`✅ Уведомление отправлено администратору ${ADMIN_ID}`);
+      res.json({ 
+        success: true, 
+        message: 'Notification sent',
+        admin_id: ADMIN_ID,
+        order_id: order_id,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      console.log(`❌ Не удалось отправить уведомление администратору`);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to send notification',
+        admin_id: ADMIN_ID
+      });
+    }
     
   } catch (error) {
-    console.error('Ошибка обработки уведомления:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('💥 ОШИБКА обработки уведомления:', error.message);
+    console.error(error.stack);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      stack: error.stack 
+    });
   }
 });
 
@@ -132,9 +214,74 @@ app.post('/api/order-update', async (req, res) => {
   }
 });
 
+// Проверка связи с сервером магазина
+app.post('/api/test-connection', async (req, res) => {
+  try {
+    const { secret } = req.body;
+    
+    if (!API_SECRET || secret !== API_SECRET) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+    
+    if (!SERVER_URL) {
+      return res.status(400).json({
+        success: false,
+        error: 'SERVER_URL не установлен'
+      });
+    }
+    
+    console.log(`🔍 Проверяю соединение с сервером магазина: ${SERVER_URL}`);
+    
+    // Проверяем доступность сервера
+    const healthResponse = await axios.get(`${SERVER_URL}/check`, { timeout: 10000 });
+    console.log('✅ Сервер доступен:', healthResponse.data);
+    
+    // Проверяем API_SECRET
+    const testResponse = await axios.post(`${SERVER_URL}/api/test-notification`, {
+      secret: API_SECRET
+    }, { timeout: 15000 });
+    
+    console.log('✅ API_SECRET проверен:', testResponse.data);
+    
+    res.json({
+      success: true,
+      server_available: true,
+      api_secret_valid: true,
+      server_response: healthResponse.data,
+      test_response: testResponse.data,
+      bot_settings: {
+        admin_id: ADMIN_ID,
+        api_secret_set: !!API_SECRET,
+        server_url: SERVER_URL
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Ошибка проверки соединения:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      server_url: SERVER_URL
+    });
+  }
+});
+
 // Главная страница
 app.get('/', (req, res) => {
   const externalUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+  
+  const notificationsStatus = API_SECRET && ADMIN_ID ? 
+    '<div class="success">🔔 Уведомления: ✅ АКТИВНЫ</div>' : 
+    '<div class="warning">🔔 Уведомления: ❌ НЕ АКТИВНЫ</div>';
+  
+  const adminStatus = ADMIN_ID ? 
+    `<div class="success">👑 Админ: ✅ ${ADMIN_ID}</div>` : 
+    '<div class="error">👑 Админ: ❌ НЕ НАСТРОЕН</div>';
+  
+  const serverStatus = SERVER_URL ? 
+    `<div class="success">🌐 Сервер магазина: ✅ ${SERVER_URL}</div>` : 
+    '<div class="warning">🌐 Сервер магазина: ❌ НЕ НАСТРОЕН</div>';
+  
   res.send(`
     <!DOCTYPE html>
     <html>
@@ -146,37 +293,88 @@ app.get('/', (req, res) => {
         .info { background: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0; }
         .warning { background: #ff9800; color: white; padding: 10px; border-radius: 5px; margin: 10px 0; }
         .success { background: #4CAF50; color: white; padding: 10px; border-radius: 5px; margin: 10px 0; }
+        .error { background: #f44336; color: white; padding: 10px; border-radius: 5px; margin: 10px 0; }
+        .stat { display: flex; justify-content: space-between; margin: 5px 0; padding: 5px 0; border-bottom: 1px solid #eee; }
+        .stat-name { font-weight: bold; }
+        .stat-value { color: #2196F3; font-weight: bold; }
+        .orders-list { max-height: 300px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; margin: 10px 0; }
+        .order-item { padding: 8px; margin: 5px 0; background: #e8f5e8; border-radius: 4px; }
       </style>
     </head>
     <body>
       <h1>🤖 Duck Shop Bot</h1>
       <div class="status">✅ Статус: Работает</div>
       
-      ${!TOKEN ? '<div class="warning">⚠️ TG_TOKEN не установлен!</div>' : ''}
-      ${!ADMIN_ID ? '<div class="warning">⚠️ ADMIN_CHAT_ID не установлен</div>' : ''}
-      ${!SERVER_URL ? '<div class="warning">⚠️ RENDER_URL не установлен</div>' : ''}
-      ${!API_SECRET ? '<div class="warning">⚠️ API_SECRET не установлен</div>' : ''}
+      ${adminStatus}
+      ${serverStatus}
+      ${notificationsStatus}
       
-      ${TOKEN && ADMIN_ID && SERVER_URL && API_SECRET ? '<div class="success">✅ Все настройки корректны</div>' : ''}
+      ${!TOKEN ? '<div class="error">⚠️ TG_TOKEN не установлен!</div>' : ''}
+      ${!API_SECRET ? '<div class="error">⚠️ API_SECRET не установлен!</div>' : ''}
+      
+      ${TOKEN && ADMIN_ID && SERVER_URL && API_SECRET ? '<div class="success">✅ Все настройки корректны, уведомления работают!</div>' : ''}
       
       <div class="info">
-        <p><strong>👑 Администратор:</strong> ${ADMIN_ID || 'Не установлен'}</p>
-        <p><strong>🌐 Сервер магазина:</strong> ${SERVER_URL ? `<a href="${SERVER_URL}" target="_blank">${SERVER_URL}</a>` : 'Не установлен'}</p>
-        <p><strong>🌍 Внешний URL:</strong> <a href="${externalUrl}" target="_blank">${externalUrl}</a></p>
-        <p><strong>🕐 Время:</strong> ${new Date().toLocaleString()}</p>
-        <p><strong>📊 Активные сессии:</strong> ${Object.keys(userStates || {}).length}</p>
-        <p><strong>📦 Активные заказы:</strong> ${Object.keys(activeOrders || {}).filter(id => activeOrders[id].status === 'pending').length}</p>
-        <p><strong>🔄 Уведомления о заказах:</strong> ✅ Активны</p>
+        <h3>📊 Статистика:</h3>
+        <div class="stat">
+          <span class="stat-name">Активных заказов:</span>
+          <span class="stat-value">${Object.keys(activeOrders).filter(id => activeOrders[id].status === 'pending').length}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-name">Всего заказов:</span>
+          <span class="stat-value">${Object.keys(activeOrders).length}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-name">Активных сессий:</span>
+          <span class="stat-value">${Object.keys(userStates).length}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-name">Время работы:</span>
+          <span class="stat-value">${Math.floor(process.uptime() / 3600)}ч ${Math.floor((process.uptime() % 3600) / 60)}м</span>
+        </div>
+        <div class="stat">
+          <span class="stat-name">Внешний URL:</span>
+          <span class="stat-value"><a href="${externalUrl}">${externalUrl}</a></span>
+        </div>
+        <div class="stat">
+          <span class="stat-name">Сервер магазина:</span>
+          <span class="stat-value">${SERVER_URL ? `<a href="${SERVER_URL}">${SERVER_URL}</a>` : 'Не настроен'}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-name">Текущее время:</span>
+          <span class="stat-value">${new Date().toLocaleString()}</span>
+        </div>
+      </div>
+      
+      <div class="info">
+        <h3>📋 Активные заказы (ожидают проверки):</h3>
+        ${Object.keys(activeOrders).filter(id => activeOrders[id].status === 'pending').length > 0 ? 
+          `<div class="orders-list">
+            ${Object.entries(activeOrders)
+              .filter(([id, order]) => order.status === 'pending')
+              .sort((a, b) => new Date(b[1].timestamp) - new Date(a[1].timestamp))
+              .map(([id, order]) => `
+                <div class="order-item">
+                  <strong>🆔 ${id}</strong><br>
+                  📧 ${order.email}<br>
+                  ${order.code ? `🔢 Код: ${order.code}<br>` : '🔢 Код: ожидается<br>'}
+                  💰 ${order.amount}₽<br>
+                  ⏰ ${new Date(order.timestamp).toLocaleTimeString()}
+                </div>
+              `).join('')}
+          </div>` : 
+          '<p>Нет активных заказов</p>'}
       </div>
       
       <h3>📡 API Endpoints:</h3>
       <ul>
         <li><a href="/status">/status</a> - Статус бота (JSON)</li>
         <li><a href="/health">/health</a> - Проверка здоровья</li>
-        <li><a href="/products">/products</a> - Товары с сервера</li>
+        <li><a href="/connections">/connections</a> - Статус подключений</li>
         <li><a href="/orders">/orders</a> - Активные заказы (JSON)</li>
-        <li>POST /api/order-notify - Уведомления о заказах</li>
+        <li>POST /api/order-notify - <strong>Уведомления о заказах</strong></li>
         <li>POST /api/order-update - Обновление статусов</li>
+        <li>POST /api/test-connection - Тест связи с сервером</li>
         ${SERVER_URL ? `<li><a href="${SERVER_URL}">Сервер магазина</a></li>` : ''}
       </ul>
       
@@ -192,6 +390,17 @@ RENDER: ${process.env.RENDER ? '✅ Да' : '❌ Нет'}
 RENDER_EXTERNAL_URL: ${process.env.RENDER_EXTERNAL_URL || 'Не установлен'}
       </pre>
       
+      <div class="info">
+        <h3>🔔 Инструкция по настройке уведомлений:</h3>
+        <ol>
+          <li>Убедитесь что <strong>API_SECRET</strong> совпадает на сервере и боте</li>
+          <li>Установите <strong>ADMIN_CHAT_ID</strong> (ваш Telegram ID)</li>
+          <li>Установите <strong>RENDER_URL</strong> (адрес сервера магазина)</li>
+          <li>Перезапустите оба сервиса на Render</li>
+          <li>Используйте команду <code>/testconnection</code> в боте для проверки</li>
+        </ol>
+      </div>
+      
       <p style="margin-top: 40px; color: #666;">
         🤖 Бот работает 24/7 на Render.com<br>
         🔄 Для получения уведомлений убедитесь что API_SECRET совпадает с сервером магазина
@@ -203,25 +412,23 @@ RENDER_EXTERNAL_URL: ${process.env.RENDER_EXTERNAL_URL || 'Не установл
 
 // Статус бота (JSON)
 app.get('/status', (req, res) => {
+  const pendingOrders = Object.keys(activeOrders).filter(id => activeOrders[id].status === 'pending');
+  
   res.json({
     success: true,
     service: 'Duck Shop Bot',
     status: 'running',
     uptime: process.uptime(),
     admin_id: ADMIN_ID,
-    active_users: Object.keys(userStates || {}).length,
-    active_orders: Object.keys(activeOrders || {}).filter(id => activeOrders[id].status === 'pending').length,
-    total_orders: Object.keys(activeOrders || {}).length,
+    active_users: Object.keys(userStates).length,
+    active_orders: pendingOrders.length,
+    total_orders: Object.keys(activeOrders).length,
     server_url: SERVER_URL,
+    api_secret_set: !!API_SECRET,
+    bot_configured: !!(TOKEN && ADMIN_ID && SERVER_URL && API_SECRET),
     timestamp: new Date().toISOString(),
     memory: process.memoryUsage(),
-    node_version: process.version,
-    env_vars: {
-      has_token: !!TOKEN,
-      has_admin_id: !!ADMIN_ID,
-      has_server_url: !!SERVER_URL,
-      has_api_secret: !!API_SECRET
-    }
+    node_version: process.version
   });
 });
 
@@ -231,13 +438,41 @@ app.get('/health', (req, res) => {
     success: true,
     message: 'Bot is healthy',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    bot_token: TOKEN ? 'configured' : 'not_configured',
+    admin_id: ADMIN_ID ? 'configured' : 'not_configured',
+    notifications: API_SECRET ? 'enabled' : 'disabled'
+  });
+});
+
+// Статус подключений
+app.get('/connections', (req, res) => {
+  res.json({
+    success: true,
+    connections: {
+      telegram: {
+        token: TOKEN ? 'configured' : 'not_configured',
+        admin_id: ADMIN_ID || 'not_configured'
+      },
+      server: {
+        url: SERVER_URL || 'not_configured',
+        api_secret: API_SECRET ? 'configured' : 'not_configured'
+      },
+      notifications: {
+        active_orders: Object.keys(activeOrders).filter(id => activeOrders[id].status === 'pending').length,
+        total_orders: Object.keys(activeOrders).length,
+        last_notification: Object.keys(activeOrders).length > 0 ? 
+          new Date(Math.max(...Object.values(activeOrders).map(o => new Date(o.timestamp).getTime()))).toISOString() : 
+          null
+      }
+    },
+    timestamp: new Date().toISOString()
   });
 });
 
 // Список активных заказов (JSON)
 app.get('/orders', (req, res) => {
-  const pendingOrders = Object.entries(activeOrders || {})
+  const pendingOrders = Object.entries(activeOrders)
     .filter(([id, order]) => order.status === 'pending')
     .map(([id, order]) => ({
       id,
@@ -246,44 +481,16 @@ app.get('/orders', (req, res) => {
       amount: order.amount,
       items: order.items,
       timestamp: order.timestamp,
-      status: order.status
+      status: order.status,
+      stage: order.stage
     }));
   
   res.json({
     success: true,
     orders: pendingOrders,
     count: pendingOrders.length,
-    total_orders: Object.keys(activeOrders || {}).length
+    total_orders: Object.keys(activeOrders).length
   });
-});
-
-// Получить товары с сервера магазина
-app.get('/products', async (req, res) => {
-  if (!SERVER_URL) {
-    return res.status(400).json({
-      success: false,
-      error: 'RENDER_URL не установлен в переменных окружения'
-    });
-  }
-  
-  try {
-    const response = await axios.get(`${SERVER_URL}/api/products`, {
-      timeout: 5000
-    });
-    res.json({
-      success: true,
-      source: 'duck-backend',
-      products: response.data.products || [],
-      count: response.data.products?.length || 0
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      server_url: SERVER_URL,
-      message: 'Не удалось получить товары с сервера'
-    });
-  }
 });
 
 // Keep-alive для Render (предотвращает сон)
@@ -291,7 +498,8 @@ app.get('/keep-alive', (req, res) => {
   res.json({
     success: true,
     message: 'Keep-alive request received',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
   });
 });
 
@@ -326,12 +534,7 @@ console.log(`👑 Администратор: ${ADMIN_ID || 'Не установ
 console.log(`🌐 Сервер магазина: ${SERVER_URL || 'Не установлен'}`);
 console.log(`🔐 API Secret: ${API_SECRET ? '✅ Установлен' : '❌ Не установлен'}`);
 console.log(`📡 Веб-порт: ${PORT}`);
-console.log(`🔄 Уведомления о заказах: ${API_SECRET ? '✅ Активны' : '❌ Не активны'}`);
-
-// Хранилище состояний пользователей
-const userStates = {};
-// Хранилище активных заказов
-const activeOrders = {};
+console.log(`🔄 Уведомления о заказах: ${API_SECRET && ADMIN_ID ? '✅ Активны' : '❌ Не активны'}`);
 
 // =========== ФУНКЦИИ УВЕДОМЛЕНИЙ ===========
 
@@ -340,8 +543,10 @@ async function sendOrderNotification(orderId, email, items, amount, code, stage)
   try {
     if (!ADMIN_ID) {
       console.log('⚠️ ADMIN_CHAT_ID не установлен, уведомление не отправлено');
-      return;
+      return false;
     }
+
+    console.log(`📤 Отправляю уведомление о заказе ${orderId} администратору ${ADMIN_ID}`);
 
     // Форматируем список товаров
     let itemsText = '';
@@ -353,8 +558,11 @@ async function sendOrderNotification(orderId, email, items, amount, code, stage)
       itemsText = '  • Информация о товарах отсутствует\n';
     }
 
-    const stageText = stage === 'email_submitted' ? '📧 EMAIL ВВЕДЁН' : '🔢 КОД ОТПРАВЛЕН';
-    const stageEmoji = stage === 'email_submitted' ? '📧' : '🔢';
+    const stageText = stage === 'email_submitted' ? '📧 EMAIL ВВЕДЁН' : 
+                     stage === 'code_submitted' ? '🔢 КОД ОТПРАВЛЕН' : 
+                     '📦 НОВЫЙ ЗАКАЗ';
+    const stageEmoji = stage === 'email_submitted' ? '📧' : 
+                      stage === 'code_submitted' ? '🔢' : '📦';
     
     const message = 
       `${stageEmoji} *${stageText}*\n\n` +
@@ -379,30 +587,32 @@ async function sendOrderNotification(orderId, email, items, amount, code, stage)
       }
     };
 
-    // Отправляем сообщение только если это первое уведомление или пришел код
-    if (stage === 'email_submitted' || (stage === 'code_submitted' && code)) {
-      const sentMessage = await bot.sendMessage(ADMIN_ID, message, { 
-        parse_mode: 'Markdown',
-        ...keyboard 
-      });
+    // Отправляем сообщение
+    const sentMessage = await bot.sendMessage(ADMIN_ID, message, { 
+      parse_mode: 'Markdown',
+      ...keyboard 
+    });
 
-      console.log(`📤 Уведомление о заказе ${orderId} отправлено администратору`);
-      
-      // Сохраняем информацию о заказе
-      activeOrders[orderId] = {
-        email,
-        items,
-        amount,
-        code,
-        status: 'pending',
-        timestamp: new Date().toISOString(),
-        message_id: sentMessage.message_id,
-        stage: stage
-      };
-    }
+    console.log(`✅ Уведомление о заказе ${orderId} отправлено администратору`);
+    
+    // Сохраняем информацию о заказе
+    activeOrders[orderId] = {
+      email,
+      items,
+      amount,
+      code,
+      status: 'pending',
+      timestamp: new Date().toISOString(),
+      message_id: sentMessage.message_id,
+      stage: stage || 'unknown'
+    };
+
+    return true;
 
   } catch (error) {
     console.error('❌ Ошибка отправки уведомления:', error.message);
+    console.error('Детали ошибки:', error);
+    return false;
   }
 }
 
@@ -476,6 +686,7 @@ bot.onText(/\/help/, (msg) => {
     '`/orders` - Активные заказы\n' +
     '`/server` - Проверить сервер\n' +
     '`/status` - Статус бота\n' +
+    '`/testconnection` - Проверить связь с сервером\n' +
     '`/cancel` - Отменить действие\n\n' +
     '**Кнопки меню:**\n' +
     '📦 Добавить товар - Добавить новый товар\n' +
@@ -485,6 +696,63 @@ bot.onText(/\/help/, (msg) => {
     '🔄 Проверить сервер - Статус сервера',
     { parse_mode: 'Markdown' }
   );
+});
+
+// Команда для теста соединения с сервером
+bot.onText(/\/testconnection/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  
+  if (ADMIN_ID && userId !== ADMIN_ID) return;
+  
+  if (!API_SECRET) {
+    return bot.sendMessage(chatId, 
+      '❌ API_SECRET не установлен!\n' +
+      'Добавьте API_SECRET в переменные окружения Render.'
+    );
+  }
+  
+  try {
+    bot.sendMessage(chatId, '🔍 Проверяю соединение с сервером магазина...');
+    
+    const response = await axios.post(`${process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`}/api/test-connection`, {
+      secret: API_SECRET
+    }, {
+      timeout: 15000
+    });
+    
+    const data = response.data;
+    
+    if (data.success) {
+      let message = '✅ *Соединение с сервером установлено!*\n\n';
+      message += `🤖 Бот: ${data.bot_settings.api_secret_set ? '✅' : '❌'}\n`;
+      message += `🌐 Сервер: ${data.server_available ? '✅' : '❌'}\n`;
+      message += `🔐 API_SECRET: ${data.api_secret_valid ? '✅' : '❌'}\n\n`;
+      
+      if (data.server_available && data.api_secret_valid) {
+        message += '🎉 *Уведомления будут работать корректно!*\n';
+        message += 'Теперь при оформлении заказов на сайте вы будете получать уведомления.';
+      } else {
+        message += '⚠️ *Есть проблемы с настройками!*\n';
+        message += 'Уведомления могут не работать. Проверьте переменные окружения.';
+      }
+      
+      bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+    } else {
+      bot.sendMessage(chatId, 
+        `❌ Ошибка проверки соединения:\n${data.error || 'Неизвестная ошибка'}`
+      );
+    }
+    
+  } catch (error) {
+    bot.sendMessage(chatId, 
+      `💥 Ошибка проверки соединения:\n${error.message}\n\n` +
+      'Проверьте:\n' +
+      '1. Сервер магазина запущен\n' +
+      '2. API_SECRET совпадает на сервере и боте\n' +
+      '3. RENDER_URL правильно указан в боте'
+    );
+  }
 });
 
 bot.onText(/\/products/, async (msg) => {
@@ -557,7 +825,7 @@ function getMainKeyboard() {
         ['📦 Добавить товар', '📋 Список товаров'],
         ['📊 Активные заказы', '❌ Удалить товар'],
         ['🔄 Проверить сервер', '📊 Статус бота'],
-        ['❓ Помощь']
+        ['🔧 Тест соединения', '❓ Помощь']
       ],
       resize_keyboard: true,
       one_time_keyboard: false
@@ -618,6 +886,56 @@ bot.on('message', async (msg) => {
     statusMessage += `🔑 Админ ID: ${ADMIN_ID || 'Не установлен'}`;
     
     bot.sendMessage(chatId, escapeMarkdown(statusMessage), { parse_mode: 'Markdown' });
+  }
+  else if (text === '🔧 Тест соединения') {
+    if (!API_SECRET) {
+      return bot.sendMessage(chatId, 
+        '❌ API_SECRET не установлен!\n' +
+        'Добавьте API_SECRET в переменные окружения Render.'
+      );
+    }
+    
+    try {
+      bot.sendMessage(chatId, '🔍 Проверяю соединение с сервером магазина...');
+      
+      const response = await axios.post(`${process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`}/api/test-connection`, {
+        secret: API_SECRET
+      }, {
+        timeout: 15000
+      });
+      
+      const data = response.data;
+      
+      if (data.success) {
+        let message = '✅ *Соединение с сервером установлено!*\n\n';
+        message += `🤖 Бот: ${data.bot_settings.api_secret_set ? '✅' : '❌'}\n`;
+        message += `🌐 Сервер: ${data.server_available ? '✅' : '❌'}\n`;
+        message += `🔐 API_SECRET: ${data.api_secret_valid ? '✅' : '❌'}\n\n`;
+        
+        if (data.server_available && data.api_secret_valid) {
+          message += '🎉 *Уведомления будут работать корректно!*\n';
+          message += 'Теперь при оформлении заказов на сайте вы будете получать уведомления.';
+        } else {
+          message += '⚠️ *Есть проблемы с настройками!*\n';
+          message += 'Уведомления могут не работать. Проверьте переменные окружения.';
+        }
+        
+        bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+      } else {
+        bot.sendMessage(chatId, 
+          `❌ Ошибка проверки соединения:\n${data.error || 'Неизвестная ошибка'}`
+        );
+      }
+      
+    } catch (error) {
+      bot.sendMessage(chatId, 
+        `💥 Ошибка проверки соединения:\n${error.message}\n\n` +
+        'Проверьте:\n' +
+        '1. Сервер магазина запущен\n' +
+        '2. API_SECRET совпадает на сервере и боте\n' +
+        '3. RENDER_URL правильно указан в боте'
+      );
+    }
   }
   else if (text === '❓ Помощь') {
     bot.sendMessage(chatId, 'Напишите /help для списка команд');
@@ -904,9 +1222,9 @@ bot.on('callback_query', async (callbackQuery) => {
       } else if (error.code === 'ECONNREFUSED') {
         errorMsg += 'Сервер магазина недоступен';
       } else if (!SERVER_URL) {
-        errorMsg += 'RENDER_URL не установлен';
+        errorMsg += 'RENDER_URL не установен';
       } else if (!API_SECRET) {
-        errorMsg += 'API_SECRET не установлен';
+        errorMsg += 'API_SECRET не установен';
       } else {
         errorMsg += escapeMarkdown(error.message);
       }
@@ -1216,4 +1534,5 @@ process.on('SIGTERM', () => {
 
 console.log('✅ Бот и веб-сервер готовы к работе 24/7!');
 console.log(`📡 Веб-интерфейс будет доступен по внешнему URL от Render`);
-console.log(`🔄 Система уведомлений о заказах: ${API_SECRET ? '✅ АКТИВНА' : '❌ НЕ АКТИВНА'}`);
+console.log(`🔄 Система уведомлений о заказах: ${API_SECRET && ADMIN_ID ? '✅ АКТИВНА' : '❌ НЕ АКТИВНА'}`);
+console.log(`🎉 Используйте команду /testconnection в боте для проверки настроек`);
