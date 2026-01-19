@@ -811,6 +811,70 @@ function setupBotHandlers() {
       bot.sendMessage(chatId, '❌ Удаление отменено');
     }
   });
+
+  bot.on('callback_query', async (callbackQuery) => {
+  const msg = callbackQuery.message;
+  const chatId = msg.chat.id;
+  const data = callbackQuery.data;
+  
+  await bot.answerCallbackQuery(callbackQuery.id);
+  
+  // Добавь этот блок обработки кнопок выбора типа товара:
+  if (data === 'confirm_normal' || data === 'confirm_gift') {
+    const state = userStates[chatId];
+    if (!state || !state.name || !state.price || !state.image) {
+      return bot.sendMessage(chatId, '❌ Ошибка: данные товара не найдены');
+    }
+    
+    try {
+      const gift = data === 'confirm_gift';
+      const productId = `prod_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+      
+      // Отправляем на сервер
+      const response = await axios.post(`${SERVER_URL}/api/add-product`, {
+        id: productId,
+        name: state.name,
+        price: state.price,
+        image: state.image,
+        gift: gift,
+        secret: API_SECRET
+      }, {
+        timeout: 15000,
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      if (response.data.success) {
+        bot.editMessageText(
+          `✅ *Товар добавлен!*\n\n` +
+          `📦 *Название:* ${escapeMarkdown(state.name)}\n` +
+          `💰 *Цена:* ${state.price}₽\n` +
+          `🎁 *Тип:* ${gift ? 'Подарочный' : 'Обычный'}\n` +
+          `🆔 *ID:* ${productId}\n\n` +
+          `Товар теперь доступен в магазине!`,
+          {
+            chat_id: chatId,
+            message_id: msg.message_id,
+            parse_mode: 'Markdown'
+          }
+        );
+        
+        // Очищаем состояние
+        delete userStates[chatId];
+      }
+      
+    } catch (error) {
+      console.error('Ошибка добавления товара:', error);
+      bot.editMessageText(
+        `❌ *Ошибка добавления товара*\n\n` +
+        `${error.response?.data?.error || error.message}`,
+        {
+          chat_id: chatId,
+          message_id: msg.message_id,
+          parse_mode: 'Markdown'
+        }
+      );
+    }
+  }
   
   // Обработка ошибок polling
   bot.on('polling_error', (error) => {
