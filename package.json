@@ -1,13 +1,13 @@
 {
-  "name": "duck-bot",
+  "name": "duck-telegram-bot",
   "version": "1.0.0",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
   },
   "dependencies": {
-    "node-telegram-bot-api": "^0.61.0",
-    "express": "^4.18.2",
-    "axios": "^1.6.0"
+    "node-telegram-bot-api": "^0.64.0",
+    "axios": "^1.6.0",
+    "express": "^4.18.2"
   }
 }
