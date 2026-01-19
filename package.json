@@ -1,19 +1,13 @@
 {
   "name": "duck-bot",
-  "version": "2.0.0",
-  "description": "Telegram bot for Duck Shop",
+  "version": "1.0.0",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js",
-    "dev": "nodemon bot.js",
-    "keep-alive": "node keepAlive.js"
+    "start": "node bot.js"
   },
   "dependencies": {
     "node-telegram-bot-api": "^0.61.0",
     "express": "^4.18.2",
     "axios": "^1.6.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
   }
 }
