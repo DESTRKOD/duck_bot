@@ -1,0 +1,30 @@
+name: Deploy to Render
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Deploy to Render
+      run: |
+        echo "🚀 Деплой активирован"
+        echo "Время: $(date)"
+        echo "Ветка: ${{ github.ref }}"
+        
+    - name: Notify Render Webhook
+      env:
+        RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+      run: |
+        if [ -n "$RENDER_DEPLOY_HOOK" ]; then
+          curl -X POST "$RENDER_DEPLOY_HOOK"
+          echo "✅ Webhook отправлен в Render"
+        else
+          echo "⚠️ RENDER_DEPLOY_HOOK не установлен"
+        fi
